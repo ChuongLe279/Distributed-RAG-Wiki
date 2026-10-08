@@ -1,0 +1,1 @@
+"""File này để xây dựng vector store dựa trên bộ dữ liệu wiki và mô hình bert đã fine tune"""

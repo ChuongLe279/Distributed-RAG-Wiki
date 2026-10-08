@@ -1,0 +1,1 @@
+"""Folder này dùng để tiền xử lý dữ liệu của wiki. Có thể tạo file python khác để pull dữ liệu về."""
