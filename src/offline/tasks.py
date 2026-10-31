@@ -12,7 +12,11 @@ import numpy as np
 
 
 def split_chunk(article: Article, num: int) -> list[Chunk]:
-    """Chia chunk for article + gán id."""
+    """Chia chunk for article + gán id.
+    Args:
+        article: bài wiki.
+        num: 1 chunk có bao nhiêu từ.
+    """
     if num <= 0: print("Chunk size phải > 0.")
     article_content = article.content.split()
     chunks = []
@@ -128,7 +132,7 @@ def index_chunk(article: Article, chunks: list[Chunk], vector_store: str, model:
         index.insert(vec, vector_id=np.uint32(next_id))
         next_id += 1
     # Nhét vào vector store
-    index.save(save_path=str(root), index_prefix="ann")
+    index.save(save_path=str(root), index_prefix="e5-base-v2")
 
     # Phải trả lại next id vì id các chunk giữa các bài báo không được trùng nhau.
     return next_id
@@ -147,7 +151,7 @@ def validate_chunk(article: Article, chunk: Chunk, chunk_ids: set):
     if chunk.chunk_id in chunk_ids:
         raise ValueError(f"Trùng chunk_id: {chunk.chunk_id}")
 
-def save_parquet(articles: list[Article], parquet_folder: str) -> None:
+def save_parquet(articles: list[Article], parquet_folder: str, batch_size: int = 1000) -> None:
     """
     Ghi một lô bài đã làm sạch vào Parquet. Lưu theo kiểu HIVE.
     Lưu cả chunk và article.
@@ -160,13 +164,20 @@ def save_parquet(articles: list[Article], parquet_folder: str) -> None:
             batch-01.parquet
             batch-02.parquet
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size phải > 0.")
+    if not articles:
+        return
+
     ingest_date = datetime.now(timezone.utc).date().isoformat()
     root = Path(parquet_folder)
 
     article_folder = root / "articles" / f"{ingest_date}"
     chunk_folder = root / "chunks" / f"{ingest_date}"
-    for index, start in enumerate(range(0, len(articles), 1000)):
-        batch = articles[start:start+1000]
+    article_folder.mkdir(parents=True, exist_ok=True)
+    chunk_folder.mkdir(parents=True, exist_ok=True)
+    for start in range(0, len(articles), batch_size):
+        batch = articles[start:start + batch_size]
         batch_id = uuid4().hex
         article_rows = [asdict(article) for article in batch]
         chunk_rows = []
