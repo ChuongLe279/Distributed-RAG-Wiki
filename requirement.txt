@@ -1,4 +1,16 @@
 # Target Python version: 3.11
+# Direct dependencies based on .venv311, with DiskANN's NumPy constraint.
+
 # DataFrames and Parquet storage
-pandas>=2.2,<3.0
-pyarrow>=15.0,<20.0
+pandas==2.3.3
+pyarrow==19.0.1
+
+# Wikipedia API
+requests==2.34.2
+
+# Embeddings and vector indexing
+# diskannpy 0.7.0 requires exactly NumPy 1.25.0.
+numpy==1.25.0
+sentence-transformers==6.2.0
+torch==2.15.0
+diskannpy==0.7.0

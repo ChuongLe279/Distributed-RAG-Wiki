@@ -12,6 +12,9 @@ from tasks import (
 )
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
+import torch
+torch.backends.mkldnn.enabled = False
+
 
 
 VECTOR_STORE_PATH = str(Path(__file__).resolve().parents[1] / "data" / "vectorstore")
@@ -38,5 +41,9 @@ if __name__ == "__main__":
     next_id = index_chunk(article, chunks, VECTOR_STORE_PATH, model, first_chunk_id)
     save_parquet([article], PARQUET_PATH, batch_size=1)
     print("Xong.")
+
+    """
+    TODO: KIểm tra bài trùng nhau trước khi nhét vào vector store.
+    """
 
 
