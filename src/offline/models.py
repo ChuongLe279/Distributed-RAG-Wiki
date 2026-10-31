@@ -1,5 +1,5 @@
 from typing import Literal
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 
 @dataclass
