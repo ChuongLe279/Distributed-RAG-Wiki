@@ -116,8 +116,20 @@ def fetch_newest_article(api: str, header: dict) -> Article:
 
     raise RuntimeError("Không tìm thấy bài viết mới có nội dung.")
             
-def index_chunk(article: Article, chunks: list[Chunk], vector_store: str, model: SentenceTransformer, next_id: int) -> int:
-    """Tạo embedding và ghi các chunk vào chỉ mục vector."""
+def embed_chunks(article: Article, chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np.ndarray:
+    """Tạo embedding cho 1 chunk duy nhất."""
+    if chunk is None:
+        raise ValueError("Chunk không được là None.")
+    # Kiểm tra id của chunk trước khi index.
+    validate_chunk(article, chunk)
+
+    if not chunk: return np.empty((0, 768), dtype=np.float32)
+    # Embedding
+    vec = model.encode(chunk.content, batch_size = batch_size, normalize_embeddings=True).astype(np.float32)
+    return vec
+
+def index_chunks(vectors: np.ndarray, vector_store: str, next_id: int) -> int:
+    """ghi các chunk vào chỉ mục vector."""
     root = Path(vector_store)
     root.mkdir(parents=True, exist_ok=True)
     index = diskannpy.DynamicMemoryIndex(
@@ -128,22 +140,15 @@ def index_chunk(article: Article, chunks: list[Chunk], vector_store: str, model:
         complexity=64,
         graph_degree=32,
     )
-    chunk_ids = set()
-    for chunk in chunks:
-        # Kiểm tra định dạng của chunk trước khi index.
-        validate_chunk(article, chunk, chunk_ids)
-        chunk_ids.add(chunk.chunk_id)
-        # Embedding
-        vec = model.encode(f"passage: {chunk.content}", normalize_embeddings=True).astype(np.float32)
+    for vec in vectors:
         index.insert(vec, vector_id=np.uint32(next_id))
         next_id += 1
     # Nhét vào vector store
     index.save(save_path=str(root), index_prefix="e5-base-v2")
-
     # Phải trả lại next id vì id các chunk giữa các bài báo không được trùng nhau.
     return next_id
 
-def validate_chunk(article: Article, chunk: Chunk, chunk_ids: set):
+def validate_chunk(article: Article, chunk: Chunk):
     """Kiểm tra định dạng id của chunk trước khi index."""
     if chunk.article_id != article.article_id:
         raise ValueError("Chunk không thuộc bài viết này.")
@@ -154,8 +159,6 @@ def validate_chunk(article: Article, chunk: Chunk, chunk_ids: set):
     if not chunk.content.strip():
         raise ValueError(f"Chunk {chunk.chunk_id} không có nội dung.")
 
-    if chunk.chunk_id in chunk_ids:
-        raise ValueError(f"Trùng chunk_id: {chunk.chunk_id}")
 
 def save_parquet(articles: list[Article], parquet_folder: str, batch_size: int = 1000) -> None:
     """

@@ -10,7 +10,8 @@ from tasks import (
     clean_article,
     delete_parquet,
     fetch_newest_article,
-    index_chunk,
+    embed_chunks,
+    index_chunks,
     save_parquet,
     split_chunk,
 )
@@ -30,18 +31,23 @@ class SparkArticlePipeline:
     embedding_batch_num: int
     chunk_size: int
 
-    def preprocessing(self, article: RDD) -> RDD:
+    def preprocessing(self, article: list[Article]) -> RDD:
         """Clean và chia chunk song song."""
+        sc = self.spark.sparkContext
+        article_rdd = sc.parallelize(article, numSlices=self.partition_num)
         return (
-            article
+            article_rdd
             .map(clean_article)
             .flatMap(lambda article: split_chunk(article, num=self.chunk_size))
         )
 
-    def embed(self):
+    def embed(self, chunk: RDD, article: RDD) -> RDD:
+        return chunk.map(embed_chunks)
+
+    def index(self, chunk: RDD, article: RDD) -> RDD:
         raise NotImplementedError
 
-    def write(self) -> None:
+    def save(self) -> None:
         raise NotImplementedError
 
     def run(self, article: RDD) -> None:
@@ -61,6 +67,7 @@ class BackFillPipeline:
         # Ghi ra Parquet để giữ chặt schema và tối ưu I/O
         ds.to_parquet("en_wikipedia_20251101.parquet") # type: ignore
 
+"""Đang nghĩ đến chuyện dùng kafka."""
 @dataclass
 class ArticleUpdatePipeline:
     spark: SparkSession
