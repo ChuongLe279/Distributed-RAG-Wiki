@@ -1,4 +1,6 @@
-from models import Article, ArticleTask, Chunk
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from models import Article, Chunk
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import asdict
@@ -17,6 +19,8 @@ def split_chunk(article: Article, num: int) -> list[Chunk]:
         article: bài wiki.
         num: 1 chunk có bao nhiêu từ.
     """
+    from models import Chunk
+
     if num <= 0: print("Chunk size phải > 0.")
     article_content = article.content.split()
     chunks = []
@@ -58,6 +62,8 @@ def fetch_newest_article(api: str, header: dict) -> Article:
         Lấy danh sách các bài mới tạo.
         Lấy nội dung của bài mới nhất.
     """
+    from models import Article
+
     params = {
         "action": "query",
         "format": "json",

@@ -1,5 +1,9 @@
 """
-Test và chạy thử các hàm trong tasks.py
+Chúng ta có một số pipeline quan trọng sau đây:
+1. SparkArticlePipeline: Làm sạch, chia chunk, embedding và lưu dữ liệu song song bằng Spark.
+2. BackFillPipeline: Nạp các bài viết cũ theo batch vào SparkArticlePipeline.
+3. ArticleUpdatePipeline: Nhận bài viết cập nhật, xử lý phiên bản mới và thay thế dữ liệu cũ.
+4. NewArticlePipeline: Nhận bài viết mới và đưa vào SparkArticlePipeline.
 """
 from models import Article, ArticleTask, Chunk
 from tasks import (
@@ -10,40 +14,63 @@ from tasks import (
     save_parquet,
     split_chunk,
 )
-from sentence_transformers import SentenceTransformer
-from pathlib import Path
+from pyspark.sql import SparkSession
+from pyspark import RDD
 import torch
+from datasets import load_dataset
+from dataclasses import dataclass
 torch.backends.mkldnn.enabled = False
 
 
+@dataclass
+class SparkArticlePipeline:
+    spark: SparkSession
+    model_name: str
+    partition_num: int
+    embedding_batch_num: int
+    chunk_size: int
 
-VECTOR_STORE_PATH = str(Path(__file__).resolve().parents[1] / "data" / "vectorstore")
-PARQUET_PATH = str(Path(__file__).resolve().parents[1] / "data" / "parquet")
-# Chạy lần đầu thì phải tải xuống đấy
-model = SentenceTransformer("intfloat/e5-base-v2")
+    def preprocessing(self, article: RDD) -> RDD:
+        """Clean và chia chunk song song."""
+        return (
+            article
+            .map(clean_article)
+            .flatMap(lambda article: split_chunk(article, num=self.chunk_size))
+        )
 
-if __name__ == "__main__":    
-    print("Đang fetch article.")
-    article = fetch_newest_article(
-        api="https://en.wikipedia.org/w/api.php",
-        header={
-            "User-Agent": "DistributedRAG/0.1 (local research script)",
-            "Accept": "application/json",
-        },
-    )
-    print(f"Tên bài báo: {article.title}")
-    print("Đang làm sạch article.")
-    article = clean_article(article)
-    print("Đang chia chunks cho article.")
-    chunks = split_chunk(article, num=200)
-    first_chunk_id = 1
-    print("Đang index chunk.")
-    next_id = index_chunk(article, chunks, VECTOR_STORE_PATH, model, first_chunk_id)
-    save_parquet([article], PARQUET_PATH, batch_size=1)
-    print("Xong.")
+    def embed(self):
+        raise NotImplementedError
+
+    def write(self) -> None:
+        raise NotImplementedError
+
+    def run(self, article: RDD) -> None:
+        raise NotImplementedError
 
     """
     TODO: KIểm tra bài trùng nhau trước khi nhét vào vector store.
     """
 
+@dataclass
+class BackFillPipeline:
+    spark: SparkSession
 
+    def run(self) -> None:
+        # Tải bản snapshot tiếng Anh (ví dụ mốc tháng 11/2025)
+        ds = load_dataset("wikimedia/wikipedia", "20231101.en", split="train")
+        # Ghi ra Parquet để giữ chặt schema và tối ưu I/O
+        ds.to_parquet("en_wikipedia_20251101.parquet") # type: ignore
+
+@dataclass
+class ArticleUpdatePipeline:
+    spark: SparkSession
+
+    def run(self) -> None:
+        raise NotImplementedError
+
+@dataclass  
+class NewArticlePipeline:
+    spark: SparkSession
+
+    def run(self) -> None:
+        raise NotImplementedError
