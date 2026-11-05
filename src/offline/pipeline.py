@@ -44,10 +44,11 @@ class SparkArticlePipeline:
         """Clean và chia chunk song song."""
         sc = self.spark.sparkContext
         article_rdd = sc.parallelize(articles, numSlices=self.partition_num)
+        chunk_size = self.chunk_size
         return (
             article_rdd
             .map(clean_article)
-            .flatMap(lambda article: split_chunk(article, num=self.chunk_size))
+            .flatMap(lambda article: split_chunk(article, num=chunk_size))
         )
 
     def validate(self, chunks: RDD, articles: RDD) -> None:
@@ -64,13 +65,16 @@ class SparkArticlePipeline:
         pairs.foreach(validate_pair)
 
     def embed(self, chunks: RDD) -> RDD:
+        model = self.model
+        batch_size = self.embedding_batch_num
         return chunks.map(
-            lambda c: embed_chunk(c, model=self.model, batch_size=self.embedding_batch_num)
+            lambda c: embed_chunk(c, model=model, batch_size=batch_size)
         )
 
     def index(self, vectors: RDD) -> RDD:
+        vector_store = self.vector_store
         return vectors.zipWithIndex().map(
-            lambda item: index_chunk(item[0], self.vector_store, next_id=item[1] + 1)
+            lambda item: index_chunk(item[0], vector_store, next_id=item[1] + 1)
         )
 
     def save(self, articles: RDD, chunks: RDD) -> tuple[RDD, RDD]:

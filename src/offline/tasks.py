@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from models import Article, Chunk
+    from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import asdict
@@ -8,8 +11,6 @@ import pandas as pd
 from uuid import uuid4
 import requests
 import re
-import diskannpy
-from sentence_transformers import SentenceTransformer
 import numpy as np
 
 def split_chunk(article: Article, num: int) -> list[Chunk]:
@@ -127,6 +128,8 @@ def embed_chunk(chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np
 
 def index_chunk(vector: np.ndarray, vector_store: str, next_id: int) -> int:
     """Ghi 1 chunk vào chỉ mục vector."""
+    import diskannpy
+
     root = Path(vector_store)
     root.mkdir(parents=True, exist_ok=True)
     index = diskannpy.DynamicMemoryIndex(

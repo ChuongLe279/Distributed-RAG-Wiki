@@ -1,15 +1,6 @@
 from typing import Literal
 from dataclasses import dataclass
 from datetime import date
-from tasks import (
-    clean_article,
-    delete_parquet,
-    fetch_newest_article,
-    index_chunk,
-    save_parquet,
-    split_chunk,
-    validate_chunk,
-)
 
 @dataclass
 class Article:
