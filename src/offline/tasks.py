@@ -12,7 +12,6 @@ import diskannpy
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-
 def split_chunk(article: Article, num: int) -> list[Chunk]:
     """Chia chunk for article + gán id.
     Args:
@@ -29,7 +28,7 @@ def split_chunk(article: Article, num: int) -> list[Chunk]:
         chunk_id = index
         article_id=article.article_id
         revision_id=article.revision_id
-        chunks.append(Chunk(chunk_id, article_id, revision_id, content))
+        chunks.append(Chunk(chunk_id, article_id, revision_id, content,""))
     return chunks
     
 def clean_article(article: Article) -> Article:
@@ -112,24 +111,22 @@ def fetch_newest_article(api: str, header: dict) -> Article:
             updated_date=created_date,
             title=page["title"],
             content=page["extract"],
+            parquet_path=""
         )
 
     raise RuntimeError("Không tìm thấy bài viết mới có nội dung.")
             
-def embed_chunks(article: Article, chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np.ndarray:
+def embed_chunk(chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np.ndarray:
     """Tạo embedding cho 1 chunk duy nhất."""
     if chunk is None:
         raise ValueError("Chunk không được là None.")
-    # Kiểm tra id của chunk trước khi index.
-    validate_chunk(article, chunk)
-
     if not chunk: return np.empty((0, 768), dtype=np.float32)
     # Embedding
     vec = model.encode(chunk.content, batch_size = batch_size, normalize_embeddings=True).astype(np.float32)
     return vec
 
-def index_chunks(vectors: np.ndarray, vector_store: str, next_id: int) -> int:
-    """ghi các chunk vào chỉ mục vector."""
+def index_chunk(vector: np.ndarray, vector_store: str, next_id: int) -> int:
+    """Ghi 1 chunk vào chỉ mục vector."""
     root = Path(vector_store)
     root.mkdir(parents=True, exist_ok=True)
     index = diskannpy.DynamicMemoryIndex(
@@ -140,9 +137,8 @@ def index_chunks(vectors: np.ndarray, vector_store: str, next_id: int) -> int:
         complexity=64,
         graph_degree=32,
     )
-    for vec in vectors:
-        index.insert(vec, vector_id=np.uint32(next_id))
-        next_id += 1
+    index.insert(vector, vector_id=np.uint32(next_id))
+    next_id += 1
     # Nhét vào vector store
     index.save(save_path=str(root), index_prefix="e5-base-v2")
     # Phải trả lại next id vì id các chunk giữa các bài báo không được trùng nhau.
@@ -159,10 +155,10 @@ def validate_chunk(article: Article, chunk: Chunk):
     if not chunk.content.strip():
         raise ValueError(f"Chunk {chunk.chunk_id} không có nội dung.")
 
-
-def save_parquet(articles: list[Article], parquet_folder: str, batch_size: int = 1000) -> None:
+def save_parquet(text: str, text_id: int, parquet_folder: str, category: str) -> str:
     """
     Ghi một lô bài đã làm sạch vào Parquet. Lưu theo kiểu HIVE.
+    Category: article hoặc chunks
     Lưu cả chunk và article.
     articles
         date
@@ -173,42 +169,30 @@ def save_parquet(articles: list[Article], parquet_folder: str, batch_size: int =
             batch-01.parquet
             batch-02.parquet
     """
-    if batch_size <= 0:
-        raise ValueError("batch_size phải > 0.")
-    if not articles:
-        return
+    if not text:
+        raise ValueError("Text trước khi save parquet bị rỗng.")
+
+    if category not in ("article", "chunk"):
+        raise ValueError("Category phải là article hoặc chunk.")
 
     ingest_date = datetime.now(timezone.utc).date().isoformat()
     root = Path(parquet_folder)
+    save_folder = root / f"{category}" / f"date={ingest_date}"
+    save_folder.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"text_id": text_id, "text": text}]).to_parquet(
+        save_folder / f"{text_id}.parquet",
+        engine="pyarrow",
+        compression="snappy", # Dùng để giảm dung lượng
+        index=False,
+    )
+    return str(save_folder / f"{text_id}.parquet")
 
-    article_folder = root / "articles" / f"{ingest_date}"
-    chunk_folder = root / "chunks" / f"{ingest_date}"
-    article_folder.mkdir(parents=True, exist_ok=True)
-    chunk_folder.mkdir(parents=True, exist_ok=True)
-    for start in range(0, len(articles), batch_size):
-        batch = articles[start:start + batch_size]
-        batch_id = uuid4().hex
-        article_rows = [asdict(article) for article in batch]
-        chunk_rows = []
-        for article in batch:
-            chunks = split_chunk(article, num=200)
-            chunk_rows.extend(asdict(chunk) for chunk in chunks)
-        pd.DataFrame(article_rows).to_parquet(
-            article_folder / f"{batch_id}.parquet",
-            engine="pyarrow",
-            compression="snappy", # Dùng để giảm dung lượng
-            index=False,
-        )
-        if chunk_rows:
-            pd.DataFrame(chunk_rows).to_parquet(
-                chunk_folder / f"{batch_id}.parquet",
-                engine="pyarrow",
-                compression="snappy",
-                index=False,
-            )
+def delete_parquet(parquet_path: str) -> None:
+    """Xóa file parquet khi có update."""
+    path = Path(parquet_path)
+    path.unlink(missing_ok=True)
 
-def delete_parquet():
-    """Chưa nghĩ ra thuật toán để tìm parquet."""
+def detect_new_article() -> bool:
     raise NotImplementedError
 
 

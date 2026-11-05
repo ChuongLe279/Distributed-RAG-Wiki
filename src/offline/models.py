@@ -19,6 +19,7 @@ class Article:
     updated_date: date
     title: str
     content: str
+    parquet_path: str
 
 @dataclass
 class Chunk:
@@ -26,6 +27,7 @@ class Chunk:
     article_id: int
     revision_id: int
     content: str
+    parquet_path: str
     metadata: str = "{}" # json
 
 @dataclass(frozen=True)
