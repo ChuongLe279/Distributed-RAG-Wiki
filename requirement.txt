@@ -4,6 +4,7 @@
 # DataFrames and Parquet storage
 pandas==2.3.3
 pyarrow==19.0.1
+datasets==3.6.0
 
 # Wikipedia API
 requests==2.34.2
