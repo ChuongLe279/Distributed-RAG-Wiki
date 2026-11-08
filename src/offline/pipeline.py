@@ -26,7 +26,6 @@ from sentence_transformers import SentenceTransformer
 from dataclasses import replace
 torch.backends.mkldnn.enabled = False
 
-
 @dataclass
 class SparkArticlePipeline:
     spark: SparkSession
@@ -135,7 +134,6 @@ class BackFillPipeline:
         # Ghi ra Parquet để giữ chặt schema và tối ưu I/O
         ds.to_parquet("en_wikipedia_20251101.parquet") # type: ignore
 
-"""Đang nghĩ đến chuyện dùng kafka."""
 @dataclass
 class ArticleUpdatePipeline:
     spark: SparkSession
