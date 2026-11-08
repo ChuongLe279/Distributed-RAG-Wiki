@@ -1,6 +1,9 @@
 # Target Python version: 3.11
 # Direct dependencies based on .venv311, with DiskANN's NumPy constraint.
 
+# Distributed processing
+pyspark==4.3.0
+
 # DataFrames and Parquet storage
 pandas==2.3.3
 pyarrow==19.0.1
