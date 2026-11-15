@@ -6,25 +6,23 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from datetime import datetime, timezone
-from dataclasses import asdict
 import pandas as pd
-from uuid import uuid4
-import requests
 import re
 import numpy as np
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf, trim
+from pyspark.sql.functions import col, udf, trim, posexplode
 from pyspark.sql.types import (
     StructType,
     StructField,
     LongType,
     IntegerType,
     StringType,
+    ArrayType
 )
+from pyspark.sql import DataFrame
 
-
-def create_dataframe(xml_data):
+def create_article_dataframe(xml_data):
     """
     Đọc Wikipedia XML dump thành Spark DataFrame.
     xml_data: đường dẫn tới file .xml.
@@ -69,6 +67,7 @@ def create_dataframe(xml_data):
 
     @udf(returnType=StringType(), useArrow=False)
     def strip_wikitext(text):
+        """Cái này là thư viện dùng để làm sạch file xml từ wiki dump."""
         import mwparserfromhell
         if not text:
             return ""
@@ -77,8 +76,34 @@ def create_dataframe(xml_data):
     articles = articles.withColumn("content", strip_wikitext(col("content")))
     return articles.filter(col("content").isNotNull() & (trim(col("content")) != ""))
 
+def create_chunk_dataframe(articles: DataFrame, chunk_size: int):
+    """
+    Đọc article dataframe, với mỗi article thì split nó ra thành chunk 200 chữ.
+    Dataframe sẽ có dạng:
+        article_id
+        revision_id
+        chunk_index: thứ tự của chunk trong article.
+        content
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size phải lớn hơn 0.")
+    
+    @udf(returnType=ArrayType(StringType()), useArrow=False)
+    def split_content(content):
+        words = (content or "").split()
+        return [
+            " ".join(words[start:start + chunk_size])
+            for start in range(0, len(words), chunk_size)
+        ]
+    return articles.select(
+        col("article_id"),
+        col("revision_id"),
+        posexplode(split_content(col("content"))).alias("chunk_index", "content"),
+    )
+
 def split_chunk(article: Article, num: int) -> list[Chunk]:
-    """Chia chunk for article + gán id.
+    """
+    Chia chunk for article + gán id.
     Args:
         article: bài wiki.
         num: 1 chunk có bao nhiêu từ.
@@ -106,80 +131,6 @@ def clean_content(title: str, content: str) -> str:
     text = re.sub(pattern, "", content, flags=re.MULTILINE).strip()
     text = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)*', '\n', text)
     return "Title: " + title + "\n" + text
-
-
-def clean_article(article: Article) -> Article:
-    """Làm sạch content và trả về bài đã làm sạch.
-    Sẽ làm những bước sau đây:
-        1. Loại bỏ các thư mục trống (Do hàm fetch không fetch được bảng, hình ảnh, biểu đồ, vv.)
-        2. Bỏ dấu cách cuối bằng strip()
-        3. Xóa dòng trống bị thừa.
-        4. Thêm title vào content.
-    """
-    article.content = clean_content(article.title, article.content)
-    return article
-
-def fetch_newest_article(api: str, header: dict) -> Article:
-    """
-    Lấy wiki mới nhất. Cho updated data = created date.
-    Luồng hoạt động của hàm:
-        Lấy danh sách các bài mới tạo.
-        Lấy nội dung của bài mới nhất.
-    """
-    from models import Article
-
-    params = {
-        "action": "query",
-        "format": "json",
-        "list": "recentchanges",
-        "rctype": "new",
-        "rcshow": "!redirect",
-        "rcnamespace": 0,
-        "rclimit": 1,
-        "rcprop": "title|timestamp|user|ids",
-    }
-    
-    # Lấy danh sách bài mới nhất
-    r = requests.get(api, params=params, headers=header, timeout=20)
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise RuntimeError(data["error"])
-
-    changes = data["query"]["recentchanges"]
-
-    # Lấy bài mới nhất trong dánh sách
-    for change in changes:
-        extract_params = {
-            "action": "query",
-            "format": "json",
-            "prop": "extracts",
-            "explaintext": 1,
-            "redirects": 1,
-            "pageids": change["pageid"],
-        }
-        r = requests.get(api, params=extract_params, headers=header, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        if "error" in data:
-            raise RuntimeError(data["error"])
-
-        page = next(iter(data["query"]["pages"].values()))
-        if "missing" in page or not page.get("extract"):
-            continue
-        created_date = datetime.fromisoformat(change["timestamp"].replace("Z", "+00:00")).date()
-
-        return Article(
-            article_id=page["pageid"],
-            revision_id=change["revid"],
-            created_date=created_date,
-            updated_date=created_date,
-            title=page["title"],
-            content=page["extract"],
-            parquet_path=""
-        )
-
-    raise RuntimeError("Không tìm thấy bài viết mới có nội dung.")
             
 def embed_chunk(chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np.ndarray:
     """Tạo embedding cho 1 chunk duy nhất."""
