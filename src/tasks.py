@@ -13,6 +13,70 @@ import requests
 import re
 import numpy as np
 
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, udf, trim
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    LongType,
+    IntegerType,
+    StringType,
+)
+
+
+def create_dataframe(xml_data):
+    """
+    Đọc Wikipedia XML dump thành Spark DataFrame.
+    xml_data: đường dẫn tới file .xml.
+    Dataframe sẽ có dạng:
+        article_id
+        revision_id
+        title
+        content
+    """
+    spark = SparkSession.builder.getOrCreate()
+
+
+    page_schema = StructType([
+        StructField("id", LongType(), nullable=True),
+        StructField("title", StringType(), nullable=True),
+        StructField("ns", IntegerType(), nullable=True),
+        StructField("revision", StructType([
+            StructField("id", LongType(), nullable=True),
+            StructField("text", StructType([
+                StructField("_VALUE", StringType(), nullable=True),
+            ]), nullable=True),
+        ]), nullable=True),
+    ])
+
+    pages = (
+        spark.read
+        .format("xml")
+        .option("rowTag", "page")
+        .option("valueTag", "_VALUE")
+        .option("mode", "FAILFAST")
+        .schema(page_schema)
+        .load(str(xml_data))
+    )
+
+    # Lọc trước khi chọn cột
+    articles = pages.filter(col("ns") == 0).select(
+        col("id").alias("article_id"),
+        col("revision.id").alias("revision_id"),
+        col("title"),
+        col("revision.text._VALUE").alias("content"),
+    )
+
+    @udf(returnType=StringType(), useArrow=False)
+    def strip_wikitext(text):
+        import mwparserfromhell
+        if not text:
+            return ""
+        return mwparserfromhell.parse(text).strip_code(normalize=True, collapse=True).strip()
+
+    articles = articles.withColumn("content", strip_wikitext(col("content")))
+    return articles.filter(col("content").isNotNull() & (trim(col("content")) != ""))
+
 def split_chunk(article: Article, num: int) -> list[Chunk]:
     """Chia chunk for article + gán id.
     Args:
@@ -32,6 +96,18 @@ def split_chunk(article: Article, num: int) -> list[Chunk]:
         chunks.append(Chunk(chunk_id, article_id, revision_id, content,""))
     return chunks
     
+def clean_content(title: str, content: str) -> str:
+    """Làm sạch chuỗi nội dung; dùng chung cho DataFrame và Article."""
+    pattern = (
+        r"^==[ \t]*[^=\n]+[ \t]*==[ \t]*"
+        r"(?:\n[ \t]*)*"
+        r"(?=^==[ \t]*[^=\n]+[ \t]*==[ \t]*$|\Z)"
+    )
+    text = re.sub(pattern, "", content, flags=re.MULTILINE).strip()
+    text = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)*', '\n', text)
+    return "Title: " + title + "\n" + text
+
+
 def clean_article(article: Article) -> Article:
     """Làm sạch content và trả về bài đã làm sạch.
     Sẽ làm những bước sau đây:
@@ -40,19 +116,7 @@ def clean_article(article: Article) -> Article:
         3. Xóa dòng trống bị thừa.
         4. Thêm title vào content.
     """
-    text = article.content
-    title = article.title
-    text = "Title: " + title + "\n" + text
-    text = text.strip()
-    text = re.sub(r'\n{2,}', '\n', text)
-
-    article.content = text
-    pattern = (
-        r"^==[ \t]*[^=\n]+[ \t]*==[ \t]*"
-        r"(?:\n[ \t]*)*"
-        r"(?=^==[ \t]*[^=\n]+[ \t]*==[ \t]*$|\Z)"
-    )
-    re.sub(pattern, "", text, flags=re.MULTILINE).strip()
+    article.content = clean_content(article.title, article.content)
     return article
 
 def fetch_newest_article(api: str, header: dict) -> Article:

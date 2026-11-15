@@ -12,6 +12,7 @@ python-dotenv>=1.0,<2
 
 # Wikipedia API
 requests==2.34.2
+mwparserfromhell>=0.6,<1
 
 # Embeddings and vector indexing
 # diskannpy 0.7.0 requires exactly NumPy 1.25.0.
