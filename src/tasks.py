@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from models import Article, Chunk
-    from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
@@ -210,8 +210,7 @@ def delete_parquet(parquet_path: str) -> None:
     path = Path(parquet_path)
     path.unlink(missing_ok=True)
 
-def detect_new_article() -> bool:
-    raise NotImplementedError
+
 
 
 
