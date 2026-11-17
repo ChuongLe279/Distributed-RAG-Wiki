@@ -13,6 +13,8 @@ Gói chạy độc lập, gồm Kafka và một container Python 3.11.
 
 ## Cấu trúc
 
+Code nằm trong `src/offline/kafka_producer/`:
+
 | File | Vai trò |
 |---|---|
 | `producer/wiki_kafka_producer.py` | Toàn bộ producer: chế độ `--replay` và `--live`. |
@@ -20,8 +22,14 @@ Gói chạy độc lập, gồm Kafka và một container Python 3.11.
 | `common/config.py` | Cấu hình đọc từ biến môi trường: Kafka, `WIKI_*`, `SHARD_RANGE_SIZE`. |
 | `tests/test_producer.py` | Unit test, không cần Kafka. |
 | `tests/test_replay_kafka.py` | Test tích hợp, cần Kafka đang chạy. |
-| `tests/fixtures/replay_sample.jsonl` | 22 message mẫu của 20 bài (nội dung tự viết). Có sẵn các trường hợp để test bước sau: trang redirect, trang định hướng, bài có bảng và infobox, một bài được sửa 2 lần. Tạo lại bằng `python tests/fixtures/make_replay_sample.py`. |
-| `docker-compose.yml`, `Dockerfile` | Kafka 3.7.2, service tạo topic, container producer. |
+| `tests/fixtures/replay_sample.jsonl` | 22 message mẫu của 20 bài (nội dung tự viết). Có sẵn các trường hợp để test bước sau: trang redirect, trang định hướng, bài có bảng và infobox, một bài được sửa 2 lần. Tạo lại bằng `docker compose exec producer python tests/fixtures/make_replay_sample.py`. |
+
+File chạy nằm ở root của repo:
+
+| File | Vai trò |
+|---|---|
+| `docker-compose.yml` | Kafka 3.7.2, service tạo topic, container producer. |
+| `docker/producer.Dockerfile` | Image Python 3.11 cho producer, cài thư viện từ `requirement.txt`. |
 
 ## Định dạng message
 
@@ -46,6 +54,8 @@ Topic `article_dlq` đã được tạo nhưng chưa có gì ghi vào. Topic nà
 Message lớn hơn 8 MB (`KAFKA_MAX_MESSAGE_BYTES`) bị bỏ qua và ghi log.
 
 ## Chạy
+
+Mọi lệnh dưới đây chạy ở root của repo.
 
 1. Khởi động Kafka và container producer. Lần đầu sẽ build image, mất khoảng 1 phút:
 

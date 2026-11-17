@@ -13,6 +13,12 @@ python-dotenv>=1.0,<2
 # Wikipedia API
 requests==2.34.2
 
+# Kafka producer (src/offline/kafka_producer)
+confluent-kafka==2.6.1
+
+# Tests
+pytest==8.3.3
+
 # Embeddings and vector indexing
 # diskannpy 0.7.0 requires exactly NumPy 1.25.0.
 numpy==1.25.0

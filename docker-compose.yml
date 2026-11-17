@@ -1,4 +1,4 @@
-name: wiki-producer
+name: distributed-rag-wiki
 
 services:
   kafka:
@@ -53,11 +53,15 @@ services:
 
   producer:
     image: wiki-producer:py311
-    build: .
+    build:
+      context: .
+      dockerfile: docker/producer.Dockerfile
     mem_limit: 512m
     environment:
       KAFKA_BOOTSTRAP: kafka:9092
       WIKI_CONTACT: ${WIKI_CONTACT:-}
+      PYTHONPATH: /opt/app/src/offline/kafka_producer
+    working_dir: /opt/app/src/offline/kafka_producer
     depends_on:
       kafka-init:
         condition: service_completed_successfully
