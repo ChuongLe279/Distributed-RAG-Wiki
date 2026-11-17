@@ -82,21 +82,26 @@ def create_chunk_dataframe(articles: DataFrame, chunk_size: int) -> DataFrame:
         revision_id
         chunk_index: thứ tự của chunk trong article.
         content
+    Đầu mỗi chunk sẽ được + title.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size phải lớn hơn 0.")
     
     @udf(returnType=ArrayType(StringType()), useArrow=False)
-    def split_content(content):
+    def split_content(content, title):
         words = (content or "").split()
-        return [
-            " ".join(words[start:start + chunk_size])
-            for start in range(0, len(words), chunk_size)
-        ]
+        title = (title or "").strip()
+
+        chunks = []
+        for start in range(0, len(words), chunk_size):
+            text = " ".join(words[start:start + chunk_size])
+            chunks.append(f"{title}\n\n{text}" if title else text)
+        return chunks
+    
     return articles.select(
         col("article_id"),
         col("revision_id"),
-        posexplode(split_content(col("content"))).alias("chunk_index", "content"),
+        posexplode(split_content(col("content"), col("title"))).alias("chunk_index", "content"),
     )
 
             
@@ -213,42 +218,7 @@ def validate_chunk(chunk: DataFrame):
     if duplicate_keys.limit(1).count() > 0:
         raise ValueError("Trùng khóa (article_id, revision_id, chunk_index).")
 
-def save_parquet(text: str, text_id: int, parquet_folder: str, category: str) -> str:
-    """
-    Ghi một lô bài đã làm sạch vào Parquet. Lưu theo kiểu HIVE.
-    Category: article hoặc chunks
-    Lưu cả chunk và article.
-    articles
-        date
-            batch-01.parquet
-            batch-02.parquet
-    chunks
-        date
-            batch-01.parquet
-            batch-02.parquet
-    """
-    if not text:
-        raise ValueError("Text trước khi save parquet bị rỗng.")
 
-    if category not in ("article", "chunk"):
-        raise ValueError("Category phải là article hoặc chunk.")
-
-    ingest_date = datetime.now(timezone.utc).date().isoformat()
-    root = Path(parquet_folder)
-    save_folder = root / f"{category}" / f"date={ingest_date}"
-    save_folder.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame([{"text_id": text_id, "text": text}]).to_parquet(
-        save_folder / f"{text_id}.parquet",
-        engine="pyarrow",
-        compression="snappy", # Dùng để giảm dung lượng
-        index=False,
-    )
-    return str(save_folder / f"{text_id}.parquet")
-
-def delete_parquet(parquet_path: str) -> None:
-    """Xóa file parquet khi có update."""
-    path = Path(parquet_path)
-    path.unlink(missing_ok=True)
 
 
 

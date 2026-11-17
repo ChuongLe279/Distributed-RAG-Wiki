@@ -1,16 +1,7 @@
 from dataclasses import dataclass
-from pathlib import Path
-import sys
-import os
-import numpy as np
-import pyspark
 from pyspark.sql import DataFrame
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import coalesce, col, lit, udf
-from pyspark.sql.types import StringType
-
-from tasks import *
+from sentence_transformers import SentenceTransformer
+import tasks
 
 
 @dataclass
@@ -23,28 +14,42 @@ class CommonPipeline:
     4. Delta lake và vector store sẽ được phân tán vào 2 máy thông qua các node docker.
     """    
     article: DataFrame
+    model: SentenceTransformer
+    collection_name: str = "wiki_chunks"
+    vector_store = ""
 
     def clean_article(self) -> DataFrame:
-        """Làm sạch article."""
-        raise NotImplementedError
+        """Làm sạch article.
+        Note: hiện tại thì t thấy cũng chả cần làm sạch gì.
+        """
+        return self.article
 
     def split_article_into_chunks(self, article: DataFrame) -> DataFrame:
         """Chia article thành chunk 200 chữ."""
-        raise NotImplementedError
+        return tasks.create_chunk_dataframe(article, chunk_size=200)
     
     def validate_chunk(self, chunk: DataFrame):
         """Kiểm tra định dạng của chunk trước khi embed."""
-        raise NotImplementedError
+        tasks.validate_chunk(chunk)
 
     def embed_chunk(self, chunk: DataFrame) -> DataFrame:
         """Embed chunk."""
-        raise NotImplementedError
+        return tasks.embed_chunks(
+            chunk,
+            model=self.model,
+            batch_size=32,
+        )
 
     def index_chunk(self, chunk: DataFrame) -> int:
         """Nhét chunk vào vector store."""
-        raise NotImplementedError
+        return tasks.index_chunk(
+            chunk,
+            vector_store=self.vector_store,
+            collection_name=self.collection_name,
+            batch_size=1000,
+        )
 
-    def create_delta_table(self):
+    def create_delta_table(self) -> None:
         """Tạo bảng delta table để phân tán."""
         raise NotImplementedError
 
