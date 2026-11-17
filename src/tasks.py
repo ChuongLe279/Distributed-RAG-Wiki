@@ -1,15 +1,11 @@
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from models import Article, Chunk
+from typing import Iterator
+from pymilvus import MilvusClient
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
-import re
 import numpy as np
-
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, udf, trim, posexplode
 from pyspark.sql.types import (
@@ -18,11 +14,13 @@ from pyspark.sql.types import (
     LongType,
     IntegerType,
     StringType,
-    ArrayType
+    ArrayType,
+    FloatType
 )
+from pyspark.sql.functions import col, trim, length
 from pyspark.sql import DataFrame
 
-def create_article_dataframe(xml_data):
+def create_article_dataframe(xml_data) -> DataFrame:
     """
     Đọc Wikipedia XML dump thành Spark DataFrame.
     xml_data: đường dẫn tới file .xml.
@@ -76,7 +74,7 @@ def create_article_dataframe(xml_data):
     articles = articles.withColumn("content", strip_wikitext(col("content")))
     return articles.filter(col("content").isNotNull() & (trim(col("content")) != ""))
 
-def create_chunk_dataframe(articles: DataFrame, chunk_size: int):
+def create_chunk_dataframe(articles: DataFrame, chunk_size: int) -> DataFrame:
     """
     Đọc article dataframe, với mỗi article thì split nó ra thành chunk 200 chữ.
     Dataframe sẽ có dạng:
@@ -101,77 +99,119 @@ def create_chunk_dataframe(articles: DataFrame, chunk_size: int):
         posexplode(split_content(col("content"))).alias("chunk_index", "content"),
     )
 
-def split_chunk(article: Article, num: int) -> list[Chunk]:
-    """
-    Chia chunk for article + gán id.
-    Args:
-        article: bài wiki.
-        num: 1 chunk có bao nhiêu từ.
-    """
-    from models import Chunk
-
-    if num <= 0: print("Chunk size phải > 0.")
-    article_content = article.content.split()
-    chunks = []
-    for index, start in enumerate((range(0, len(article_content), num))):
-        content = content=" ".join(article_content[start:start + num])
-        chunk_id = index
-        article_id=article.article_id
-        revision_id=article.revision_id
-        chunks.append(Chunk(chunk_id, article_id, revision_id, content,""))
-    return chunks
-    
-def clean_content(title: str, content: str) -> str:
-    """Làm sạch chuỗi nội dung; dùng chung cho DataFrame và Article."""
-    pattern = (
-        r"^==[ \t]*[^=\n]+[ \t]*==[ \t]*"
-        r"(?:\n[ \t]*)*"
-        r"(?=^==[ \t]*[^=\n]+[ \t]*==[ \t]*$|\Z)"
-    )
-    text = re.sub(pattern, "", content, flags=re.MULTILINE).strip()
-    text = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)*', '\n', text)
-    return "Title: " + title + "\n" + text
             
-def embed_chunk(chunk: Chunk, model: SentenceTransformer, batch_size: int) -> np.ndarray:
-    """Tạo embedding cho 1 chunk duy nhất."""
-    if chunk is None:
-        raise ValueError("Chunk không được là None.")
-    if not chunk: return np.empty((0, 768), dtype=np.float32)
-    # Embedding
-    vec = model.encode(chunk.content, batch_size = batch_size, normalize_embeddings=True).astype(np.float32)
-    return vec
-
-def index_chunk(vector: np.ndarray, vector_store: str, next_id: int) -> int:
-    """Ghi 1 chunk vào chỉ mục vector."""
-    import diskannpy
-
-    root = Path(vector_store)
-    root.mkdir(parents=True, exist_ok=True)
-    index = diskannpy.DynamicMemoryIndex(
-        distance_metric="cosine",
-        vector_dtype=np.float32,
-        dimensions=768, # model: "intfloat/e5-base-v2"
-        max_vectors=100_000,
-        complexity=64,
-        graph_degree=32,
+def embed_chunks(chunk: DataFrame, model: SentenceTransformer, batch_size: int = 32) -> DataFrame:
+    """
+    Gán thêm cột embedding cho từng chunk.
+    Chunk dataframe sẽ có dạng này:
+        article_id
+        revision_id
+        chunk_index: thứ tự của chunk trong article.
+        content
+        embedding
+    """
+    # Thêm cột embedding
+    output_schema = StructType(
+        chunk.schema.fields + [StructField("embedding", ArrayType(FloatType()), True)]
     )
-    index.insert(vector, vector_id=np.uint32(next_id))
-    next_id += 1
-    # Nhét vào vector store
-    index.save(save_path=str(root), index_prefix="e5-base-v2")
-    # Phải trả lại next id vì id các chunk giữa các bài báo không được trùng nhau.
-    return next_id
+    def embedding(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+        # Embedding
+        for pdf in iterator:
+            # Bỏ qua nếu batch rỗng
+            if pdf.empty:
+                continue
 
-def validate_chunk(article: Article, chunk: Chunk):
+            # Chuyển cột content thành list để encode theo batch
+            texts = pdf["content"].fillna("").tolist()
+
+            # Encode toàn bộ batch trong pandas DataFrame
+            embeddings = model.encode(
+                texts,
+                batch_size=batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+
+            # Gán kết quả vào cột mới (chuyển về list of floats cho Spark)
+            pdf["embedding"] = embeddings.astype(np.float32).tolist()
+            yield pdf
+    
+    return chunk.mapInPandas(embedding, schema=output_schema)
+
+def index_chunk(chunk: DataFrame, vector_store: str, collection_name = "wiki_chunks", batch_size = 1000) -> int:
+    """
+    Nhét toàn bộ cột embedding trong chunk dataframe vào vectorstore.
+    """
+    root_folder = Path(vector_store)
+    if not root_folder:
+        raise TypeError("Sai path!")
+
+    status_schema = StructType([StructField("inserted_count", LongType(), False)])
+
+    def insert_partition(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+        # hởi tạo kết nối Milvus 1 lần duy nhất cho mỗi partition
+        client = MilvusClient(uri=vector_store)
+
+        for pdf in iterator:
+            if pdf.empty:
+                continue
+
+            # Chuyển pandas DataFrame thành list of dicts: [{"article_id": ..., "embedding": ...}, ...]
+            # Lưu ý: Tên các cột trong DataFrame phải khớp với schema của Collection trong Milvus
+            records = pdf.to_dict(orient="records")
+
+            # Chia nhỏ tiếp (sub-batch) để tránh vượt quá giới hạn gRPC message size (thường là 64MB) của Milvus
+            inserted_in_pdf = 0
+            for i in range(0, len(records), batch_size):
+                sub_batch = records[i : i + batch_size]
+                res = client.insert(
+                    collection_name=collection_name,
+                    data=sub_batch,
+                )
+                inserted_in_pdf += res.get("insert_count", len(sub_batch))
+
+            # 4. Yield số lượng đã insert của batch này để giải phóng RAM và tiếp tục batch kế
+            yield pd.DataFrame({"inserted_count": [inserted_in_pdf]})
+
+        client.close()
+
+    result_df = chunk.mapInPandas(insert_partition, schema=status_schema)
+    total_inserted = result_df.agg({"inserted_count": "sum"}).collect()[0][0]
+
+    return total_inserted or 0
+
+
+def validate_chunk(chunk: DataFrame):
     """Kiểm tra định dạng id của chunk trước khi index."""
-    if chunk.article_id != article.article_id:
-        raise ValueError("Chunk không thuộc bài viết này.")
+    if chunk is None:
+        raise ValueError("Chunk DataFrame không được là None.")
 
-    if chunk.revision_id != article.revision_id:
-        raise ValueError("Revision của chunk không khớp bài viết.")
+    required_columns = {"article_id", "revision_id", "chunk_index", "content",}
+    missing_columns = required_columns - set(chunk.columns)
 
-    if not chunk.content.strip():
-        raise ValueError(f"Chunk {chunk.chunk_id} không có nội dung.")
+    if missing_columns:
+        raise ValueError(f"Thiếu các cột: {sorted(missing_columns)}")
+
+    invalid_rows = chunk.filter(
+        col("article_id").isNull()
+        | col("revision_id").isNull()
+        | col("chunk_index").isNull()
+        | (col("chunk_index") < 0)
+        | col("content").isNull()
+        | (length(trim(col("content"))) == 0)
+    )
+
+    if invalid_rows.limit(1).count() > 0:
+        raise ValueError("Chunk có ID null, chunk_index âm hoặc nội dung rỗng.")
+
+    duplicate_keys = (
+        chunk.groupBy("article_id", "revision_id", "chunk_index")
+        .count()
+        .filter(col("count") > 1)
+    )
+
+    if duplicate_keys.limit(1).count() > 0:
+        raise ValueError("Trùng khóa (article_id, revision_id, chunk_index).")
 
 def save_parquet(text: str, text_id: int, parquet_folder: str, category: str) -> str:
     """
