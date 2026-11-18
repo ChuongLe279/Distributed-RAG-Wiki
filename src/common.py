@@ -16,7 +16,8 @@ class CommonPipeline:
     article: DataFrame
     model: SentenceTransformer
     collection_name: str = "wiki_chunks"
-    vector_store = ""
+    vector_store: str = ""
+    delta_lake_path: str = ""
 
     def clean_article(self) -> DataFrame:
         """Làm sạch article.
@@ -49,9 +50,12 @@ class CommonPipeline:
             batch_size=1000,
         )
 
-    def create_delta_table(self) -> None:
-        """Tạo bảng delta table để phân tán."""
-        raise NotImplementedError
+    def create_delta_lake_table(self, article: DataFrame, chunk: DataFrame) -> None:
+        """Tạo bảng delta table cho cả article và chunk."""
+        tasks.create_delta_lake_table(article, self.delta_lake_path)
+        print(f"Đã tạo bảng delta lake cho article")
+        tasks.create_delta_lake_table(chunk, self.delta_lake_path)
+        print(f"Đã tạo bảng delta lake cho chunk")
 
     def run(self):
         clean_article = self.clean_article()
@@ -60,7 +64,7 @@ class CommonPipeline:
         self.embed_chunk(chunk_df)
         total_index = self.index_chunk(chunk_df)
         print(f"Total index = {total_index}")
-        self.create_delta_table()
+        self.create_delta_lake_table(clean_article, chunk_df)
 
 if __name__ == "__main__":
     pass

@@ -3,7 +3,6 @@ from typing import Iterator
 from pymilvus import MilvusClient
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
-from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 from pyspark.sql import SparkSession
@@ -218,11 +217,5 @@ def validate_chunk(chunk: DataFrame):
     if duplicate_keys.limit(1).count() > 0:
         raise ValueError("Trùng khóa (article_id, revision_id, chunk_index).")
 
-
-
-
-
-
-
-    
-    
+def create_delta_lake_table(dataframe: DataFrame, save_path: str) -> None:
+    dataframe.write.format("delta").mode("overwrite").save(save_path)
