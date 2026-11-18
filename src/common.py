@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pyspark.sql import DataFrame
 from sentence_transformers import SentenceTransformer
 import tasks
+from pathlib import Path
 
 
 @dataclass
@@ -52,16 +53,17 @@ class CommonPipeline:
 
     def create_delta_lake_table(self, article: DataFrame, chunk: DataFrame) -> None:
         """Tạo bảng delta table cho cả article và chunk."""
-        tasks.create_delta_lake_table(article, self.delta_lake_path)
+        base_path = Path(self.delta_lake_path)
+        tasks.create_delta_lake_table(article, str(base_path / "articles"))
         print(f"Đã tạo bảng delta lake cho article")
-        tasks.create_delta_lake_table(chunk, self.delta_lake_path)
+        tasks.create_delta_lake_table(chunk, str(base_path / "chunks"))
         print(f"Đã tạo bảng delta lake cho chunk")
 
     def run(self):
         clean_article = self.clean_article()
         chunk_df = self.split_article_into_chunks(clean_article)
         self.validate_chunk(chunk_df)
-        self.embed_chunk(chunk_df)
+        chunk_df = self.embed_chunk(chunk_df)
         total_index = self.index_chunk(chunk_df)
         print(f"Total index = {total_index}")
         self.create_delta_lake_table(clean_article, chunk_df)
