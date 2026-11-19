@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-import tasks
+import offline.tasks as tasks
 from pyspark.sql import DataFrame
 
 # Allow direct execution from any working directory.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from common import CommonPipeline
+from offline.common import CommonPipeline
 
 
 @dataclass

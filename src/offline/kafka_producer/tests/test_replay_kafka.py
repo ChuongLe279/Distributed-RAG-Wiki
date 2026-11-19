@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from common import config
+from offline.common import config
 from producer import wiki_kafka_producer as wp
 
 pytestmark = pytest.mark.integration

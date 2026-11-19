@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pyspark.sql import DataFrame
 from sentence_transformers import SentenceTransformer
-import tasks
+import offline.tasks as tasks
 from pathlib import Path
 
 
