@@ -3,6 +3,7 @@
 
 # Distributed processing
 pyspark==4.3.0
+delta-spark
 
 # DataFrames and Parquet storage
 pandas==2.3.3
@@ -12,6 +13,7 @@ python-dotenv>=1.0,<2
 
 # Wikipedia API
 requests==2.34.2
+mwparserfromhell>=0.6,<1
 
 # Kafka producer (src/offline/kafka_producer)
 confluent-kafka==2.6.1
@@ -25,3 +27,4 @@ numpy==1.25.0
 sentence-transformers==6.2.0
 torch==2.15.0
 diskannpy==0.7.0
+pymilvus

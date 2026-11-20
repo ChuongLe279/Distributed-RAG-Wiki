@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any
 
-from common import config
+from offline.common import config
 from common.schemas import validate_message
 
 log = logging.getLogger("wiki_producer")

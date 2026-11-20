@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from common import config
+from offline.common import config
 from common.schemas import validate_message
 from producer import wiki_kafka_producer as wp
 
