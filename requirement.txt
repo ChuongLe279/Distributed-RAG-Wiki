@@ -3,6 +3,7 @@
 
 # Distributed processing
 pyspark==4.3.0
+delta-spark
 
 # DataFrames and Parquet storage
 pandas==2.3.3
@@ -26,3 +27,4 @@ numpy==1.25.0
 sentence-transformers==6.2.0
 torch==2.15.0
 diskannpy==0.7.0
+pymilvus
