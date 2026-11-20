@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pyspark import StorageLevel
 from pyspark.sql import DataFrame
 from sentence_transformers import SentenceTransformer
 import offline.tasks as tasks
@@ -60,13 +61,29 @@ class CommonPipeline:
         print(f"Đã tạo bảng delta lake cho chunk")
 
     def run(self):
-        clean_article = self.clean_article()
-        chunk_df = self.split_article_into_chunks(clean_article)
-        self.validate_chunk(chunk_df)
-        chunk_df = self.embed_chunk(chunk_df)
-        total_index = self.index_chunk(chunk_df)
-        print(f"Total index = {total_index}")
-        self.create_delta_lake_table(clean_article, chunk_df)
+        persisted_frames = []
+        try:
+            # Reuse cleaned articles for validation, embedding and the articles table.
+            clean_article = self.clean_article().persist(StorageLevel.MEMORY_AND_DISK)
+            persisted_frames.append(clean_article)
+
+            chunk_df = self.split_article_into_chunks(clean_article).persist(
+                StorageLevel.MEMORY_AND_DISK
+            )
+            persisted_frames.append(chunk_df)
+            self.validate_chunk(chunk_df)
+
+            # Keep embeddings for both Milvus actions and the chunks table write.
+            embedded_chunk_df = self.embed_chunk(chunk_df).persist(
+                StorageLevel.MEMORY_AND_DISK
+            )
+            persisted_frames.append(embedded_chunk_df)
+            total_index = self.index_chunk(embedded_chunk_df)
+            print(f"Total index = {total_index}")
+            self.create_delta_lake_table(clean_article, embedded_chunk_df)
+        finally:
+            for dataframe in reversed(persisted_frames):
+                dataframe.unpersist()
 
 if __name__ == "__main__":
     pass

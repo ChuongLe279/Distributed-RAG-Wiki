@@ -1,12 +1,11 @@
 from __future__ import annotations
 from typing import Iterator
-from pymilvus import MilvusClient
+from pymilvus import MilvusClient, DataType
 from sentence_transformers import SentenceTransformer
-from pathlib import Path
 import pandas as pd
 import numpy as np
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf, trim, posexplode
+from pyspark.sql.functions import col, udf, trim, posexplode, length
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -16,7 +15,6 @@ from pyspark.sql.types import (
     ArrayType,
     FloatType
 )
-from pyspark.sql.functions import col, trim, length
 from pyspark.sql import DataFrame
 
 def create_article_dataframe(xml_data) -> DataFrame:
@@ -36,6 +34,9 @@ def create_article_dataframe(xml_data) -> DataFrame:
         StructField("id", LongType(), nullable=True),
         StructField("title", StringType(), nullable=True),
         StructField("ns", IntegerType(), nullable=True),
+        StructField("redirect", StructType([
+            StructField("_title", StringType(), nullable=True),
+        ]), nullable=True),
         StructField("revision", StructType([
             StructField("id", LongType(), nullable=True),
             StructField("text", StructType([
@@ -55,7 +56,7 @@ def create_article_dataframe(xml_data) -> DataFrame:
     )
 
     # Lọc trước khi chọn cột
-    articles = pages.filter(col("ns") == 0).select(
+    articles = pages.filter((col("ns") == 0) & col("redirect").isNull()).select(
         col("id").alias("article_id"),
         col("revision.id").alias("revision_id"),
         col("title"),
@@ -146,9 +147,42 @@ def index_chunk(chunk: DataFrame, vector_store: str, collection_name = "wiki_chu
     """
     Nhét toàn bộ cột embedding trong chunk dataframe vào vectorstore.
     """
-    root_folder = Path(vector_store)
-    if not root_folder:
-        raise TypeError("Sai path!")
+    if not vector_store:
+        raise ValueError("vector_store must be a Milvus URI or database path.")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero.")
+
+    # Initialize on the driver before Spark starts inserting partitions.
+    sample = chunk.select("embedding").take(1)
+    if not sample:
+        return 0
+    vector = sample[0]["embedding"]
+    if vector is None or len(vector) == 0:
+        raise ValueError("embedding must be a non-empty vector.")
+    dimension = len(vector)
+
+    client = MilvusClient(uri=vector_store)
+    try:
+        if not client.has_collection(collection_name=collection_name):
+            schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=False)
+            schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+            schema.add_field(field_name="article_id", datatype=DataType.INT64)
+            schema.add_field(field_name="revision_id", datatype=DataType.INT64)
+            schema.add_field(field_name="chunk_index", datatype=DataType.INT64)
+            schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)
+            schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=dimension)
+            index_params = client.prepare_index_params()
+            index_params.add_index(field_name="embedding", index_type="AUTOINDEX", metric_type="COSINE")
+            client.create_collection(
+                collection_name=collection_name, schema=schema, index_params=index_params,
+            )
+        else:
+            fields = client.describe_collection(collection_name=collection_name)["fields"] # type: ignore
+            embedding_field = next((field for field in fields if field["name"] == "embedding"), None)
+            if embedding_field is None or int(embedding_field.get("params", {}).get("dim", 0)) != dimension:
+                raise ValueError("Existing collection embedding dimension does not match the chunks.")
+    finally:
+        client.close()
 
     status_schema = StructType([StructField("inserted_count", LongType(), False)])
 
